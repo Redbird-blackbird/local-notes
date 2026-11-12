@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_notes/models/block_model.dart';
 import 'package:local_notes/models/note_file.dart';
+import 'package:local_notes/services/vault_service.dart';
 
 void main() {
   group('NoteFile Tests', () {
@@ -108,6 +109,49 @@ void main() => print("test");
       final reparsed = BlockParser.parseMarkdown(markdown);
       expect(reparsed.any((b) => b.type == BlockType.heading1 && b.text == 'Top Level'), isTrue);
       expect(reparsed.any((b) => b.type == BlockType.todo && b.isChecked && b.text == 'Check me'), isTrue);
+    });
+  });
+
+  group('VaultService Folder & Move Tests', () {
+    test('creates and lists custom folders correctly', () async {
+      final vault = VaultService();
+      await vault.initialize();
+
+      expect(vault.allFolders, contains('Root'));
+      final err = await vault.createFolder('Designs');
+      expect(err, isNull);
+      expect(vault.allFolders, contains('Designs'));
+
+      // Duplicate folder returns error
+      final errDup = await vault.createFolder('Designs');
+      expect(errDup, isNotNull);
+    });
+
+    test('moves note to folder and updates relative path', () async {
+      final vault = VaultService();
+      await vault.initialize();
+
+      final note = await vault.createNote(title: 'My Project Spec');
+      expect(note.folder, isNotEmpty);
+
+      await vault.moveNoteToFolder(note, 'Engineering');
+      expect(note.folder, equals('Engineering'));
+      expect(note.path, equals('Engineering/My Project Spec.md'));
+      expect(vault.notesByFolder['Engineering'], contains(note));
+    });
+
+    test('deleting folder moves notes to Root when deleteNotes is false', () async {
+      final vault = VaultService();
+      await vault.initialize();
+
+      await vault.createFolder('Archive');
+      final note = await vault.createNote(folder: 'Archive', title: 'Old Spec');
+      expect(note.folder, equals('Archive'));
+
+      await vault.deleteFolder('Archive', deleteNotes: false);
+      expect(vault.allFolders.contains('Archive'), isFalse);
+      expect(note.folder, equals('Root'));
+      expect(note.path, equals('Old Spec.md'));
     });
   });
 }

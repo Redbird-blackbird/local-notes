@@ -124,6 +124,78 @@ class WebFsHelper {
     return completer.future;
   }
 
+  static Future<bool> createDirectory(String path) {
+    final completer = Completer<bool>();
+    if (!_isValidPath(path)) return Future.value(false);
+    final fs = context['localNotesFS'];
+    if (fs == null) {
+      completer.complete(false);
+      return completer.future;
+    }
+
+    try {
+      fs.callMethod('createDirectory', [
+        path,
+        ((JSAny? result) {
+          if (completer.isCompleted) return;
+          if (result == null) {
+            completer.complete(false);
+            return;
+          }
+          try {
+            completer.complete(_isSuccessfulResult(result));
+          } on Object catch (error, stackTrace) {
+            debugPrint('Could not process createDirectory result: $error');
+            debugPrintStack(stackTrace: stackTrace);
+            completer.complete(false);
+          }
+        }).toJS
+      ]);
+    } on Object catch (error, stackTrace) {
+      debugPrint('Could not create directory "$path": $error');
+      debugPrintStack(stackTrace: stackTrace);
+      completer.complete(false);
+    }
+
+    return completer.future;
+  }
+
+  static Future<bool> deleteDirectory(String path) {
+    final completer = Completer<bool>();
+    if (!_isValidPath(path)) return Future.value(false);
+    final fs = context['localNotesFS'];
+    if (fs == null) {
+      completer.complete(false);
+      return completer.future;
+    }
+
+    try {
+      fs.callMethod('deleteDirectory', [
+        path,
+        ((JSAny? result) {
+          if (completer.isCompleted) return;
+          if (result == null) {
+            completer.complete(false);
+            return;
+          }
+          try {
+            completer.complete(_isSuccessfulResult(result));
+          } on Object catch (error, stackTrace) {
+            debugPrint('Could not process deleteDirectory result: $error');
+            debugPrintStack(stackTrace: stackTrace);
+            completer.complete(false);
+          }
+        }).toJS
+      ]);
+    } on Object catch (error, stackTrace) {
+      debugPrint('Could not delete directory "$path": $error');
+      debugPrintStack(stackTrace: stackTrace);
+      completer.complete(false);
+    }
+
+    return completer.future;
+  }
+
   static void downloadFile(String filename, String content) {
     final fs = context['localNotesFS'];
     if (fs == null || filename.isEmpty) return;

@@ -163,6 +163,45 @@
           }
         })();
       },
+      createDirectory: function(dirPath, callback) {
+        if (!window.localNotesFS.currentDirHandle) {
+          if (callback) callback(JSON.stringify({ success: false, error: "No directory handle active" }));
+          return;
+        }
+        (async function() {
+          try {
+            const parts = dirPath.split('/');
+            let currentHandle = window.localNotesFS.currentDirHandle;
+            for (let i = 0; i < parts.length; i++) {
+              if (parts[i]) {
+                currentHandle = await currentHandle.getDirectoryHandle(parts[i], { create: true });
+              }
+            }
+            if (callback) callback(JSON.stringify({ success: true }));
+          } catch (err) {
+            if (callback) callback(JSON.stringify({ success: false, error: err.message }));
+          }
+        })();
+      },
+      deleteDirectory: function(dirPath, callback) {
+        if (!window.localNotesFS.currentDirHandle) {
+          if (callback) callback(JSON.stringify({ success: false, error: "No directory handle active" }));
+          return;
+        }
+        (async function() {
+          try {
+            const parts = dirPath.split('/');
+            let currentHandle = window.localNotesFS.currentDirHandle;
+            for (let i = 0; i < parts.length - 1; i++) {
+              currentHandle = await currentHandle.getDirectoryHandle(parts[i]);
+            }
+            await currentHandle.removeEntry(parts[parts.length - 1], { recursive: true });
+            if (callback) callback(JSON.stringify({ success: true }));
+          } catch (err) {
+            if (callback) callback(JSON.stringify({ success: false, error: err.message }));
+          }
+        })();
+      },
       downloadFile: function(filename, content) {
         const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
         const url = URL.createObjectURL(blob);

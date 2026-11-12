@@ -10,12 +10,14 @@ class VaultService extends ChangeNotifier {
   static const String _storageKeyVaultName = 'local_notes_vault_name';
   static const String _storageKeyActiveId = 'local_notes_active_id';
   static const String _storageKeyDarkMode = 'local_notes_dark_mode';
+  static const String _storageKeyFolders = 'local_notes_custom_folders';
 
   final Map<String, String> _memoryStorage = {};
 
   String _vaultName = 'My Obsidian Vault';
   bool _isNativeFileSystem = false;
   List<NoteFile> _notes = [];
+  final Set<String> _customFolders = {};
   NoteFile? _activeNote;
   bool _isDarkMode = false;
   bool _isSidebarOpen = true;
@@ -36,12 +38,31 @@ class VaultService extends ChangeNotifier {
 
   List<NoteFile> get favoriteNotes => _notes.where((n) => n.isFavorite).toList();
 
-  /// Group notes by folder
+  /// All unique folders in alphabetical order with Root always first
+  List<String> get allFolders {
+    final set = <String>{};
+    set.addAll(_customFolders);
+    for (final n in _notes) {
+      if (n.folder.isNotEmpty && n.folder != 'Root') {
+        set.add(n.folder);
+      }
+    }
+    final sorted = set.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return ['Root', ...sorted];
+  }
+
+  /// Group notes by folder, preserving empty created folders
   Map<String, List<NoteFile>> get notesByFolder {
     final Map<String, List<NoteFile>> grouped = {};
+    for (final folder in allFolders) {
+      grouped[folder] = [];
+    }
     for (final note in filteredNotes) {
       final folder = note.folder.isEmpty ? 'Root' : note.folder;
       grouped.putIfAbsent(folder, () => []).add(note);
+    }
+    if (_searchQuery.trim().isNotEmpty) {
+      grouped.removeWhere((k, v) => v.isEmpty);
     }
     return grouped;
   }
@@ -77,6 +98,16 @@ class VaultService extends ChangeNotifier {
     final savedVaultName = _getStorageItem(_storageKeyVaultName);
     if (savedVaultName != null && savedVaultName.isNotEmpty) {
       _vaultName = savedVaultName;
+    }
+
+    final savedFoldersJson = _getStorageItem(_storageKeyFolders);
+    if (savedFoldersJson != null && savedFoldersJson.isNotEmpty) {
+      try {
+        final List<dynamic> list = jsonDecode(savedFoldersJson);
+        _customFolders.addAll(list.map((e) => e.toString()));
+      } catch (e) {
+        debugPrint("Error restoring saved folders: $e");
+      }
     }
 
     final savedJson = _getStorageItem(_storageKeyNotes);
@@ -173,6 +204,14 @@ class VaultService extends ChangeNotifier {
         _isNativeFileSystem = true;
         _activeNote = _notes.first;
 
+        _customFolders.clear();
+        for (final note in importedNotes) {
+          if (note.folder.isNotEmpty && note.folder != 'Root') {
+            _customFolders.add(note.folder);
+          }
+        }
+        _persistFoldersLocally();
+
         _setStorageItem(_storageKeyVaultName, _vaultName);
         await _persistNotesLocally();
 
@@ -190,6 +229,10 @@ class VaultService extends ChangeNotifier {
   /// Create a new note
   Future<NoteFile> createNote({String? folder, String? title, String? icon}) async {
     final targetFolder = folder ?? (_activeNote?.folder ?? 'Root');
+    if (targetFolder != 'Root' && !_customFolders.contains(targetFolder)) {
+      _customFolders.add(targetFolder);
+      _persistFoldersLocally();
+    }
     final noteTitle = title ?? 'Untitled';
     final noteIcon = icon ?? '📄';
     final safeName = noteTitle.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
@@ -276,6 +319,160 @@ class VaultService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Create a new folder
+  Future<String?> createFolder(String folderName) async {
+    final trimmed = folderName.trim();
+    if (trimmed.isEmpty || trimmed.toLowerCase() == 'root') {
+      return 'Folder name cannot be empty or "Root"';
+    }
+    if (trimmed.contains(RegExp(r'[\\/:*?"<>|]'))) {
+      return 'Folder name cannot contain special characters';
+    }
+    if (allFolders.any((f) => f.toLowerCase() == trimmed.toLowerCase())) {
+      return 'Folder already exists';
+    }
+
+    _customFolders.add(trimmed);
+    _persistFoldersLocally();
+
+    if (_isNativeFileSystem) {
+      await WebFsHelper.createDirectory(trimmed);
+    }
+
+    _showSaveStatus('Created folder "$trimmed"');
+    notifyListeners();
+    return null;
+  }
+
+  /// Delete folder and optionally delete or move notes inside
+  Future<void> deleteFolder(String folderName, {bool deleteNotes = false}) async {
+    if (folderName == 'Root') return;
+
+    _customFolders.remove(folderName);
+
+    final notesInFolder = _notes.where((n) => n.folder == folderName).toList();
+    if (deleteNotes) {
+      for (final note in notesInFolder) {
+        _notes.remove(note);
+        if (_isNativeFileSystem) {
+          await WebFsHelper.deleteFile(note.path);
+        }
+      }
+      if (_activeNote != null && notesInFolder.contains(_activeNote)) {
+        _activeNote = _notes.isNotEmpty ? _notes.first : null;
+      }
+    } else {
+      for (final note in notesInFolder) {
+        final oldPath = note.path;
+        note.folder = 'Root';
+        final filename = note.path.replaceAll('\\', '/').split('/').last;
+        note.path = filename;
+        note.id = filename;
+        note.lastModified = DateTime.now();
+
+        if (_isNativeFileSystem) {
+          await WebFsHelper.deleteFile(oldPath);
+          await _syncNoteToDisk(note);
+        }
+      }
+    }
+
+    if (_isNativeFileSystem) {
+      await WebFsHelper.deleteDirectory(folderName);
+    }
+
+    _persistFoldersLocally();
+    await _persistNotesLocally();
+    _showSaveStatus('Deleted folder "$folderName"');
+    notifyListeners();
+  }
+
+  /// Rename an existing folder
+  Future<String?> renameFolder(String oldName, String newName) async {
+    final trimmed = newName.trim();
+    if (oldName == 'Root' || trimmed.isEmpty || trimmed.toLowerCase() == 'root') {
+      return 'Cannot rename to or from Root';
+    }
+    if (trimmed.contains(RegExp(r'[\\/:*?"<>|]'))) {
+      return 'Folder name cannot contain special characters';
+    }
+    if (allFolders.any((f) => f.toLowerCase() == trimmed.toLowerCase() && f.toLowerCase() != oldName.toLowerCase())) {
+      return 'Folder with this name already exists';
+    }
+
+    _customFolders.remove(oldName);
+    _customFolders.add(trimmed);
+
+    final notesInFolder = _notes.where((n) => n.folder == oldName).toList();
+    for (final note in notesInFolder) {
+      final oldPath = note.path;
+      note.folder = trimmed;
+      final filename = note.path.replaceAll('\\', '/').split('/').last;
+      note.path = '$trimmed/$filename';
+      note.id = note.path;
+      note.lastModified = DateTime.now();
+
+      if (_isNativeFileSystem) {
+        await WebFsHelper.deleteFile(oldPath);
+        await _syncNoteToDisk(note);
+      }
+    }
+
+    if (_isNativeFileSystem) {
+      await WebFsHelper.createDirectory(trimmed);
+      await WebFsHelper.deleteDirectory(oldName);
+    }
+
+    _persistFoldersLocally();
+    await _persistNotesLocally();
+    _showSaveStatus('Renamed folder to "$trimmed"');
+    notifyListeners();
+    return null;
+  }
+
+  /// Move note to target folder (Obsidian & filesystem compatible)
+  Future<void> moveNoteToFolder(NoteFile note, String newFolder) async {
+    final targetFolder = newFolder.trim().isEmpty ? 'Root' : newFolder.trim();
+    if (note.folder == targetFolder) return;
+
+    final oldPath = note.path;
+    note.folder = targetFolder;
+
+    if (targetFolder != 'Root' && !_customFolders.contains(targetFolder)) {
+      _customFolders.add(targetFolder);
+      _persistFoldersLocally();
+    }
+
+    final filename = note.path.replaceAll('\\', '/').split('/').last;
+    final baseName = filename.replaceAll(RegExp(r'\.(md|markdown|txt)$'), '');
+    String finalFilename = filename;
+    String candidatePath = targetFolder == 'Root' ? finalFilename : '$targetFolder/$finalFilename';
+
+    int counter = 1;
+    while (_notes.any((n) => n != note && n.path.toLowerCase() == candidatePath.toLowerCase())) {
+      finalFilename = '${baseName}_$counter.md';
+      candidatePath = targetFolder == 'Root' ? finalFilename : '$targetFolder/$finalFilename';
+      counter++;
+    }
+
+    note.path = candidatePath;
+    note.id = candidatePath;
+    note.lastModified = DateTime.now();
+
+    if (_isNativeFileSystem) {
+      await WebFsHelper.deleteFile(oldPath);
+      await _syncNoteToDisk(note);
+    }
+
+    await _persistNotesLocally();
+    _showSaveStatus('Moved to $targetFolder');
+    notifyListeners();
+  }
+
+  void _persistFoldersLocally() {
+    _setStorageItem(_storageKeyFolders, jsonEncode(_customFolders.toList()));
+  }
+
   /// Export note as markdown download
   void exportNoteAsMarkdown(NoteFile note) {
     final filename = '${note.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')}.md';
@@ -288,6 +485,14 @@ class VaultService extends ChangeNotifier {
     _vaultName = 'Obsidian Knowledge Base';
     _isNativeFileSystem = false;
     _activeNote = _notes.first;
+
+    _customFolders.clear();
+    for (final n in _notes) {
+      if (n.folder.isNotEmpty && n.folder != 'Root') {
+        _customFolders.add(n.folder);
+      }
+    }
+    _persistFoldersLocally();
 
     _setStorageItem(_storageKeyVaultName, _vaultName);
     await _persistNotesLocally();

@@ -9,6 +9,7 @@ import '../../services/vault_service.dart';
 import '../../theme/app_theme.dart';
 import '../modals/cover_picker_dialog.dart';
 import '../modals/icon_picker_dialog.dart';
+import '../modals/move_note_dialog.dart';
 import 'slash_command_menu.dart';
 
 class NotionEditorView extends StatefulWidget {
@@ -122,30 +123,103 @@ class _NotionEditorViewState extends State<NotionEditorView> {
     overlay.insert(_slashMenuOverlay!);
   }
 
+  String? _autoFocusBlockId;
+
   void _insertBlockAt(int index, BlockType type, {String? defaultText}) {
+    final newBlock = NotionBlock(
+      id: 'block_${DateTime.now().millisecondsSinceEpoch}_${_blocks.length}',
+      type: type,
+      text: defaultText ?? '',
+    );
+    if (type == BlockType.callout) {
+      newBlock.calloutIcon = '💡';
+      newBlock.calloutColor = 'yellow';
+    } else if (type == BlockType.code) {
+      newBlock.codeLanguage = 'dart';
+    } else if (type == BlockType.table) {
+      newBlock.tableData = [
+        ['Feature', 'Status', 'Notes'],
+        ['Local Markdown', 'Done', 'Pure .md files'],
+        ['Notion UI', 'Done', 'Clean aesthetics'],
+      ];
+    }
     setState(() {
-      final newBlock = NotionBlock(
-        id: 'block_${DateTime.now().millisecondsSinceEpoch}',
-        type: type,
-        text: defaultText ?? '',
-      );
-      if (type == BlockType.callout) {
-        newBlock.calloutIcon = '💡';
-        newBlock.calloutColor = 'yellow';
-      } else if (type == BlockType.code) {
-        newBlock.codeLanguage = 'dart';
-      } else if (type == BlockType.table) {
-        newBlock.tableData = [
-          ['Feature', 'Status', 'Notes'],
-          ['Local Markdown', 'Done', 'Pure .md files'],
-          ['Notion UI', 'Done', 'Clean aesthetics'],
-        ];
-      }
       if (index >= _blocks.length) {
         _blocks.add(newBlock);
       } else {
         _blocks.insert(index, newBlock);
       }
+      _autoFocusBlockId = newBlock.id;
+    });
+    _saveBlocksToNote();
+  }
+
+  void _handleEnterOnBlock(int index) {
+    final current = _blocks[index];
+    final nextType = current.type;
+    int? nextNumber;
+    if (nextType == BlockType.numbered) {
+      nextNumber = (current.numberIndex ?? 1) + 1;
+    }
+
+    final newBlock = NotionBlock(
+      id: 'block_${DateTime.now().millisecondsSinceEpoch}_${_blocks.length}',
+      type: nextType,
+      text: '',
+      isChecked: false,
+      numberIndex: nextNumber,
+    );
+
+    setState(() {
+      _blocks.insert(index + 1, newBlock);
+      _autoFocusBlockId = newBlock.id;
+    });
+    _saveBlocksToNote();
+  }
+
+  void _handleBackspaceOnEmpty(int index) {
+    final block = _blocks[index];
+    if (block.type != BlockType.paragraph) {
+      setState(() {
+        block.type = BlockType.paragraph;
+      });
+      _saveBlocksToNote();
+    } else if (_blocks.length > 1) {
+      setState(() {
+        _blocks.removeAt(index);
+        final prevIndex = (index - 1).clamp(0, _blocks.length - 1);
+        _autoFocusBlockId = _blocks[prevIndex].id;
+      });
+      _saveBlocksToNote();
+    }
+  }
+
+  void _handleTurnInto(int index, BlockType newType) {
+    setState(() {
+      _blocks[index].type = newType;
+      if (newType == BlockType.numbered && _blocks[index].numberIndex == null) {
+        _blocks[index].numberIndex = 1;
+      }
+    });
+    _saveBlocksToNote();
+  }
+
+  void _handleDuplicate(int index) {
+    final orig = _blocks[index];
+    final copy = orig.copyWith(
+      id: 'block_${DateTime.now().millisecondsSinceEpoch}_${_blocks.length}',
+    );
+    setState(() {
+      _blocks.insert(index + 1, copy);
+      _autoFocusBlockId = copy.id;
+    });
+    _saveBlocksToNote();
+  }
+
+  void _handleReorderItem(int oldIndex, int newIndex) {
+    setState(() {
+      final item = _blocks.removeAt(oldIndex);
+      _blocks.insert(newIndex, item);
     });
     _saveBlocksToNote();
   }
@@ -291,9 +365,28 @@ class _NotionEditorViewState extends State<NotionEditorView> {
             padding: const EdgeInsets.symmetric(horizontal: 6),
             child: Text('/', style: TextStyle(fontSize: 12, color: mutedColor.withValues(alpha: 0.4))),
           ),
-          Text(
-            note.folder,
-            style: TextStyle(fontSize: 12, color: mutedColor, fontWeight: FontWeight.w500),
+          InkWell(
+            onTap: () {
+              showDialog(
+                context: context,
+                builder: (ctx) => MoveNoteDialog(note: note, vaultService: vault),
+              );
+            },
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.folder_outlined, size: 13, color: mutedColor),
+                  const SizedBox(width: 4),
+                  Text(
+                    note.folder,
+                    style: TextStyle(fontSize: 12, color: mutedColor, fontWeight: FontWeight.w500),
+                  ),
+                ],
+              ),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -389,6 +482,11 @@ class _NotionEditorViewState extends State<NotionEditorView> {
             onSelected: (val) {
               if (val == 'full_width') {
                 setState(() => _isFullWidth = !_isFullWidth);
+              } else if (val == 'move_folder') {
+                showDialog(
+                  context: context,
+                  builder: (ctx) => MoveNoteDialog(note: note, vaultService: vault),
+                );
               } else if (val == 'export') {
                 vault.exportNoteAsMarkdown(note);
               } else if (val == 'copy_markdown') {
@@ -401,6 +499,16 @@ class _NotionEditorViewState extends State<NotionEditorView> {
               }
             },
             itemBuilder: (ctx) => [
+              PopupMenuItem(
+                value: 'move_folder',
+                child: Row(
+                  children: [
+                    Icon(Icons.drive_file_move_outlined, size: 16, color: mutedColor),
+                    const SizedBox(width: 10),
+                    const Text('Move to folder...', style: TextStyle(fontSize: 12.5)),
+                  ],
+                ),
+              ),
               PopupMenuItem(
                 value: 'full_width',
                 child: Row(
@@ -745,8 +853,34 @@ class _NotionEditorViewState extends State<NotionEditorView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (int i = 0; i < _blocks.length; i++)
-          _buildBlockItem(i, _blocks[i], isDark, textColor, mutedColor, border),
+        Theme(
+          data: Theme.of(context).copyWith(
+            canvasColor: Colors.transparent,
+            shadowColor: Colors.transparent,
+          ),
+          child: ReorderableListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            buildDefaultDragHandles: false,
+            itemCount: _blocks.length,
+            onReorderItem: _handleReorderItem,
+            proxyDecorator: (Widget child, int index, Animation<double> animation) {
+              return Material(
+                elevation: 6,
+                color: isDark ? AppTheme.darkCardBg : Colors.white,
+                shadowColor: Colors.black26,
+                borderRadius: BorderRadius.circular(6),
+                child: child,
+              );
+            },
+            itemBuilder: (context, i) {
+              return Container(
+                key: ValueKey(_blocks[i].id),
+                child: _buildBlockItem(i, _blocks[i], isDark, textColor, mutedColor, border),
+              );
+            },
+          ),
+        ),
 
         // Bottom click-to-add block area
         InkWell(
@@ -789,6 +923,7 @@ class _NotionEditorViewState extends State<NotionEditorView> {
       textColor: textColor,
       mutedColor: mutedColor,
       border: border,
+      shouldAutoFocus: _autoFocusBlockId == block.id,
       onChanged: (newText) {
         block.text = newText;
         _saveBlocksToNote();
@@ -801,6 +936,10 @@ class _NotionEditorViewState extends State<NotionEditorView> {
       },
       onDelete: () => _deleteBlockAt(index),
       onInsertBelow: () => _insertBlockAt(index + 1, BlockType.paragraph),
+      onEnterPressed: () => _handleEnterOnBlock(index),
+      onBackspaceOnEmpty: () => _handleBackspaceOnEmpty(index),
+      onTurnInto: (type) => _handleTurnInto(index, type),
+      onDuplicate: () => _handleDuplicate(index),
       onRequestSlashMenu: (pos) => _showSlashMenu(context, index, pos),
     );
   }
@@ -885,6 +1024,11 @@ class NotionBlockWidget extends StatefulWidget {
   final VoidCallback onDelete;
   final VoidCallback onInsertBelow;
   final Function(Offset pos) onRequestSlashMenu;
+  final bool shouldAutoFocus;
+  final VoidCallback? onEnterPressed;
+  final VoidCallback? onBackspaceOnEmpty;
+  final ValueChanged<BlockType>? onTurnInto;
+  final VoidCallback? onDuplicate;
 
   const NotionBlockWidget({
     super.key,
@@ -899,6 +1043,11 @@ class NotionBlockWidget extends StatefulWidget {
     required this.onDelete,
     required this.onInsertBelow,
     required this.onRequestSlashMenu,
+    this.shouldAutoFocus = false,
+    this.onEnterPressed,
+    this.onBackspaceOnEmpty,
+    this.onTurnInto,
+    this.onDuplicate,
   });
 
   @override
@@ -907,6 +1056,7 @@ class NotionBlockWidget extends StatefulWidget {
 
 class _NotionBlockWidgetState extends State<NotionBlockWidget> {
   late TextEditingController _textCtrl;
+  late FocusNode _focusNode;
   bool _isHovered = false;
   bool _isCopied = false;
 
@@ -914,6 +1064,17 @@ class _NotionBlockWidgetState extends State<NotionBlockWidget> {
   void initState() {
     super.initState();
     _textCtrl = TextEditingController(text: widget.block.text);
+    _focusNode = FocusNode();
+    if (widget.shouldAutoFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _focusNode.requestFocus();
+          _textCtrl.selection = TextSelection.fromPosition(
+            TextPosition(offset: _textCtrl.text.length),
+          );
+        }
+      });
+    }
   }
 
   @override
@@ -922,12 +1083,70 @@ class _NotionBlockWidgetState extends State<NotionBlockWidget> {
     if (oldWidget.block.text != widget.block.text && _textCtrl.text != widget.block.text) {
       _textCtrl.text = widget.block.text;
     }
+    if (widget.shouldAutoFocus && !oldWidget.shouldAutoFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _focusNode.requestFocus();
+          _textCtrl.selection = TextSelection.fromPosition(
+            TextPosition(offset: _textCtrl.text.length),
+          );
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
+    _focusNode.dispose();
     _textCtrl.dispose();
     super.dispose();
+  }
+
+  Widget _wrapKeyboardInterceptor({
+    required Widget child,
+    bool isListType = false,
+  }) {
+    return Focus(
+      onKeyEvent: (FocusNode node, KeyEvent event) {
+        if (event is KeyDownEvent) {
+          if ((event.logicalKey == LogicalKeyboardKey.enter ||
+               event.logicalKey == LogicalKeyboardKey.numpadEnter) &&
+              !HardwareKeyboard.instance.isShiftPressed) {
+            if (isListType) {
+              if (_textCtrl.text.trim().isEmpty) {
+                widget.onTurnInto?.call(BlockType.paragraph);
+              } else {
+                widget.onEnterPressed?.call();
+              }
+              return KeyEventResult.handled;
+            } else if (widget.block.type == BlockType.paragraph) {
+              widget.onInsertBelow();
+              return KeyEventResult.handled;
+            }
+          } else if (event.logicalKey == LogicalKeyboardKey.backspace) {
+            if (_textCtrl.text.isEmpty) {
+              widget.onBackspaceOnEmpty?.call();
+              return KeyEventResult.handled;
+            }
+          }
+        }
+        return KeyEventResult.ignored;
+      },
+      child: child,
+    );
+  }
+
+  PopupMenuItem<String> _buildTurnIntoMenuItem(BlockType type, String label, IconData icon) {
+    return PopupMenuItem(
+      value: 'turn_${type.name}',
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: widget.mutedColor),
+          const SizedBox(width: 8),
+          Text(label, style: const TextStyle(fontSize: 12)),
+        ],
+      ),
+    );
   }
 
   @override
@@ -942,25 +1161,107 @@ class _NotionBlockWidgetState extends State<NotionBlockWidget> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Hover Handle (+ / ::)
+            // Hover Handle (+ / :: / Delete)
             Container(
-              width: 32,
+              width: 58,
               height: 28,
-              alignment: Alignment.center,
+              alignment: Alignment.centerLeft,
               child: _isHovered
                   ? Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        // Slash / Add menu (+)
                         InkWell(
                           onTap: () {
                             final box = context.findRenderObject() as RenderBox?;
                             final pos = box != null ? box.localToGlobal(Offset.zero) : Offset.zero;
                             widget.onRequestSlashMenu(pos + const Offset(32, 28));
                           },
-                          child: Icon(Icons.add, size: 15, color: widget.mutedColor),
+                          borderRadius: BorderRadius.circular(3),
+                          child: Padding(
+                            padding: const EdgeInsets.all(2),
+                            child: Icon(Icons.add, size: 14, color: widget.mutedColor),
+                          ),
                         ),
-                        const SizedBox(width: 2),
-                        Icon(Icons.drag_indicator, size: 14, color: widget.mutedColor),
+                        // Drag indicator handle (::) with ReorderableDragStartListener & Block Menu
+                        ReorderableDragStartListener(
+                          index: widget.index,
+                          child: MouseRegion(
+                            cursor: SystemMouseCursors.grab,
+                            child: PopupMenuButton<String>(
+                              icon: Icon(Icons.drag_indicator, size: 14, color: widget.mutedColor),
+                              tooltip: 'Drag to move, click for options',
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              color: widget.isDark ? AppTheme.darkCardBg : Colors.white,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              splashRadius: 12,
+                              onSelected: (val) {
+                                if (val == 'delete') {
+                                  widget.onDelete();
+                                } else if (val == 'duplicate') {
+                                  widget.onDuplicate?.call();
+                                } else if (val.startsWith('turn_')) {
+                                  final typeName = val.substring(5);
+                                  final match = BlockType.values.firstWhere(
+                                    (e) => e.name == typeName,
+                                    orElse: () => BlockType.paragraph,
+                                  );
+                                  widget.onTurnInto?.call(match);
+                                }
+                              },
+                              itemBuilder: (ctx) => [
+                                PopupMenuItem(
+                                  value: 'delete',
+                                  child: Row(
+                                    children: const [
+                                      Icon(Icons.delete_outline, size: 15, color: AppTheme.accentRed),
+                                      SizedBox(width: 8),
+                                      Text('Delete block', style: TextStyle(fontSize: 12, color: AppTheme.accentRed)),
+                                    ],
+                                  ),
+                                ),
+                                PopupMenuItem(
+                                  value: 'duplicate',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.copy_rounded, size: 15, color: widget.mutedColor),
+                                      const SizedBox(width: 8),
+                                      const Text('Duplicate', style: TextStyle(fontSize: 12)),
+                                    ],
+                                  ),
+                                ),
+                                const PopupMenuDivider(),
+                                const PopupMenuItem(
+                                  enabled: false,
+                                  child: Text('TURN INTO', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+                                ),
+                                _buildTurnIntoMenuItem(BlockType.paragraph, 'Text', Icons.text_fields),
+                                _buildTurnIntoMenuItem(BlockType.heading1, 'Heading 1', Icons.title),
+                                _buildTurnIntoMenuItem(BlockType.heading2, 'Heading 2', Icons.format_size),
+                                _buildTurnIntoMenuItem(BlockType.heading3, 'Heading 3', Icons.text_format),
+                                _buildTurnIntoMenuItem(BlockType.todo, 'To-do list', Icons.check_box_outlined),
+                                _buildTurnIntoMenuItem(BlockType.bullet, 'Bulleted list', Icons.format_list_bulleted),
+                                _buildTurnIntoMenuItem(BlockType.numbered, 'Numbered list', Icons.format_list_numbered),
+                                _buildTurnIntoMenuItem(BlockType.callout, 'Callout', Icons.lightbulb_outline),
+                                _buildTurnIntoMenuItem(BlockType.quote, 'Quote', Icons.format_quote),
+                                _buildTurnIntoMenuItem(BlockType.code, 'Code block', Icons.code),
+                              ],
+                            ),
+                          ),
+                        ),
+                        // Quick Delete Block Button
+                        InkWell(
+                          onTap: widget.onDelete,
+                          borderRadius: BorderRadius.circular(3),
+                          child: Padding(
+                            padding: const EdgeInsets.all(2),
+                            child: Tooltip(
+                              message: 'Delete block',
+                              child: Icon(Icons.close, size: 13, color: widget.mutedColor.withValues(alpha: 0.6)),
+                            ),
+                          ),
+                        ),
                       ],
                     )
                   : const SizedBox.shrink(),
@@ -1007,33 +1308,36 @@ class _NotionBlockWidgetState extends State<NotionBlockWidget> {
   }
 
   Widget _buildParagraphBlock() {
-    return TextField(
-      controller: _textCtrl,
-      maxLines: null,
-      style: GoogleFonts.inter(
-        fontSize: 15,
-        fontWeight: FontWeight.w400,
-        color: widget.textColor,
-        height: 1.68,
-      ),
-      decoration: InputDecoration(
-        border: InputBorder.none,
-        isDense: true,
-        contentPadding: EdgeInsets.zero,
-        hintText: _isHovered ? 'Type "/" for commands...' : null,
-        hintStyle: TextStyle(
-          color: widget.mutedColor.withValues(alpha: 0.35),
-          fontSize: 14,
+    return _wrapKeyboardInterceptor(
+      child: TextField(
+        controller: _textCtrl,
+        focusNode: _focusNode,
+        maxLines: null,
+        style: GoogleFonts.inter(
+          fontSize: 15,
+          fontWeight: FontWeight.w400,
+          color: widget.textColor,
+          height: 1.68,
         ),
+        decoration: InputDecoration(
+          border: InputBorder.none,
+          isDense: true,
+          contentPadding: EdgeInsets.zero,
+          hintText: _isHovered ? 'Type "/" for commands...' : null,
+          hintStyle: TextStyle(
+            color: widget.mutedColor.withValues(alpha: 0.35),
+            fontSize: 14,
+          ),
+        ),
+        onChanged: (val) {
+          if (val == '/') {
+            final box = context.findRenderObject() as RenderBox?;
+            final pos = box != null ? box.localToGlobal(Offset.zero) : Offset.zero;
+            widget.onRequestSlashMenu(pos + const Offset(0, 24));
+          }
+          widget.onChanged(val);
+        },
       ),
-      onChanged: (val) {
-        if (val == '/') {
-          final box = context.findRenderObject() as RenderBox?;
-          final pos = box != null ? box.localToGlobal(Offset.zero) : Offset.zero;
-          widget.onRequestSlashMenu(pos + const Offset(0, 24));
-        }
-        widget.onChanged(val);
-      },
     );
   }
 
@@ -1042,189 +1346,78 @@ class _NotionBlockWidgetState extends State<NotionBlockWidget> {
     required FontWeight fontWeight,
     required double topPadding,
   }) {
-    return Padding(
-      padding: EdgeInsets.only(top: topPadding, bottom: 2),
-      child: TextField(
-        controller: _textCtrl,
-        maxLines: null,
-        style: GoogleFonts.inter(
-          fontSize: fontSize,
-          fontWeight: fontWeight,
-          color: widget.textColor,
-          letterSpacing: -0.4,
+    return _wrapKeyboardInterceptor(
+      child: Padding(
+        padding: EdgeInsets.only(top: topPadding, bottom: 2),
+        child: TextField(
+          controller: _textCtrl,
+          focusNode: _focusNode,
+          maxLines: null,
+          style: GoogleFonts.inter(
+            fontSize: fontSize,
+            fontWeight: fontWeight,
+            color: widget.textColor,
+            letterSpacing: -0.4,
+          ),
+          decoration: const InputDecoration(
+            border: InputBorder.none,
+            isDense: true,
+            contentPadding: EdgeInsets.zero,
+            hintText: 'Heading...',
+          ),
+          onChanged: widget.onChanged,
         ),
-        decoration: const InputDecoration(
-          border: InputBorder.none,
-          isDense: true,
-          contentPadding: EdgeInsets.zero,
-          hintText: 'Heading...',
-        ),
-        onChanged: widget.onChanged,
       ),
     );
   }
 
   Widget _buildTodoBlock(NotionBlock block) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 3, right: 8),
-          child: InkWell(
-            onTap: () => widget.onToggleTodo(!block.isChecked),
-            borderRadius: BorderRadius.circular(4),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              width: 17,
-              height: 17,
-              decoration: BoxDecoration(
-                color: block.isChecked ? AppTheme.accentBlue : Colors.transparent,
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(
-                  color: block.isChecked ? AppTheme.accentBlue : widget.mutedColor,
-                  width: 1.6,
-                ),
-              ),
-              alignment: Alignment.center,
-              child: block.isChecked
-                  ? const Icon(Icons.check, size: 13, color: Colors.white)
-                  : null,
-            ),
-          ),
-        ),
-        Expanded(
-          child: TextField(
-            controller: _textCtrl,
-            maxLines: null,
-            style: GoogleFonts.inter(
-              fontSize: 15,
-              fontWeight: FontWeight.w400,
-              color: block.isChecked ? widget.mutedColor : widget.textColor,
-              decoration: block.isChecked ? TextDecoration.lineThrough : null,
-              height: 1.55,
-            ),
-            decoration: const InputDecoration(
-              border: InputBorder.none,
-              isDense: true,
-              contentPadding: EdgeInsets.zero,
-              hintText: 'To-do item...',
-            ),
-            onChanged: widget.onChanged,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBulletBlock(NotionBlock block) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 8, right: 10, left: 4),
-          child: Container(
-            width: 5.5,
-            height: 5.5,
-            decoration: BoxDecoration(
-              color: widget.textColor.withValues(alpha: 0.85),
-              shape: BoxShape.circle,
-            ),
-          ),
-        ),
-        Expanded(
-          child: TextField(
-            controller: _textCtrl,
-            maxLines: null,
-            style: GoogleFonts.inter(
-              fontSize: 15,
-              fontWeight: FontWeight.w400,
-              color: widget.textColor,
-              height: 1.6,
-            ),
-            decoration: const InputDecoration(
-              border: InputBorder.none,
-              isDense: true,
-              contentPadding: EdgeInsets.zero,
-            ),
-            onChanged: widget.onChanged,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildNumberedBlock(NotionBlock block) {
-    final idx = block.numberIndex ?? 1;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 1, right: 8),
-          child: Text(
-            '$idx.',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: widget.mutedColor,
-            ),
-          ),
-        ),
-        Expanded(
-          child: TextField(
-            controller: _textCtrl,
-            maxLines: null,
-            style: GoogleFonts.inter(
-              fontSize: 15,
-              fontWeight: FontWeight.w400,
-              color: widget.textColor,
-              height: 1.6,
-            ),
-            decoration: const InputDecoration(
-              border: InputBorder.none,
-              isDense: true,
-              contentPadding: EdgeInsets.zero,
-            ),
-            onChanged: widget.onChanged,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCalloutBlock(NotionBlock block) {
-    final style = AppTheme.calloutColors[block.calloutColor ?? 'yellow'] ??
-        AppTheme.calloutColors['yellow']!;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: style.bg(widget.isDark),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: style.border(widget.isDark), width: 1),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    return _wrapKeyboardInterceptor(
+      isListType: true,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            block.calloutIcon ?? '💡',
-            style: const TextStyle(fontSize: 20),
+          Padding(
+            padding: const EdgeInsets.only(top: 3, right: 8),
+            child: InkWell(
+              onTap: () => widget.onToggleTodo(!block.isChecked),
+              borderRadius: BorderRadius.circular(4),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                width: 17,
+                height: 17,
+                decoration: BoxDecoration(
+                  color: block.isChecked ? AppTheme.accentBlue : Colors.transparent,
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                    color: block.isChecked ? AppTheme.accentBlue : widget.mutedColor,
+                    width: 1.6,
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: block.isChecked
+                    ? const Icon(Icons.check, size: 13, color: Colors.white)
+                    : null,
+              ),
+            ),
           ),
-          const SizedBox(width: 12),
           Expanded(
             child: TextField(
               controller: _textCtrl,
+              focusNode: _focusNode,
               maxLines: null,
               style: GoogleFonts.inter(
-                fontSize: 14.5,
+                fontSize: 15,
                 fontWeight: FontWeight.w400,
-                color: widget.textColor,
+                color: block.isChecked ? widget.mutedColor : widget.textColor,
+                decoration: block.isChecked ? TextDecoration.lineThrough : null,
                 height: 1.55,
               ),
               decoration: const InputDecoration(
                 border: InputBorder.none,
                 isDense: true,
                 contentPadding: EdgeInsets.zero,
-                hintText: 'Callout text...',
+                hintText: 'To-do item...',
               ),
               onChanged: widget.onChanged,
             ),
@@ -1234,33 +1427,165 @@ class _NotionBlockWidgetState extends State<NotionBlockWidget> {
     );
   }
 
-  Widget _buildQuoteBlock(NotionBlock block) {
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(
-          left: BorderSide(
-            color: widget.textColor.withValues(alpha: 0.85),
-            width: 3.5,
+  Widget _buildBulletBlock(NotionBlock block) {
+    return _wrapKeyboardInterceptor(
+      isListType: true,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 8, right: 10, left: 4),
+            child: Container(
+              width: 5.5,
+              height: 5.5,
+              decoration: BoxDecoration(
+                color: widget.textColor.withValues(alpha: 0.85),
+                shape: BoxShape.circle,
+              ),
+            ),
           ),
+          Expanded(
+            child: TextField(
+              controller: _textCtrl,
+              focusNode: _focusNode,
+              maxLines: null,
+              style: GoogleFonts.inter(
+                fontSize: 15,
+                fontWeight: FontWeight.w400,
+                color: widget.textColor,
+                height: 1.6,
+              ),
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+              ),
+              onChanged: widget.onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNumberedBlock(NotionBlock block) {
+    final idx = block.numberIndex ?? 1;
+    return _wrapKeyboardInterceptor(
+      isListType: true,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 1, right: 8),
+            child: Text(
+              '$idx.',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: widget.mutedColor,
+              ),
+            ),
+          ),
+          Expanded(
+            child: TextField(
+              controller: _textCtrl,
+              focusNode: _focusNode,
+              maxLines: null,
+              style: GoogleFonts.inter(
+                fontSize: 15,
+                fontWeight: FontWeight.w400,
+                color: widget.textColor,
+                height: 1.6,
+              ),
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+              ),
+              onChanged: widget.onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCalloutBlock(NotionBlock block) {
+    final style = AppTheme.calloutColors[block.calloutColor ?? 'yellow'] ??
+        AppTheme.calloutColors['yellow']!;
+
+    return _wrapKeyboardInterceptor(
+      child: Container(
+        decoration: BoxDecoration(
+          color: style.bg(widget.isDark),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: style.border(widget.isDark), width: 1),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              block.calloutIcon ?? '💡',
+              style: const TextStyle(fontSize: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _textCtrl,
+                focusNode: _focusNode,
+                maxLines: null,
+                style: GoogleFonts.inter(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w400,
+                  color: widget.textColor,
+                  height: 1.55,
+                ),
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                  hintText: 'Callout text...',
+                ),
+                onChanged: widget.onChanged,
+              ),
+            ),
+          ],
         ),
       ),
-      padding: const EdgeInsets.only(left: 14, top: 2, bottom: 2),
-      child: TextField(
-        controller: _textCtrl,
-        maxLines: null,
-        style: GoogleFonts.inter(
-          fontSize: 15.5,
-          fontStyle: FontStyle.italic,
-          color: widget.textColor,
-          height: 1.6,
+    );
+  }
+
+  Widget _buildQuoteBlock(NotionBlock block) {
+    return _wrapKeyboardInterceptor(
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: widget.textColor.withValues(alpha: 0.85),
+              width: 3.5,
+            ),
+          ),
         ),
-        decoration: const InputDecoration(
-          border: InputBorder.none,
-          isDense: true,
-          contentPadding: EdgeInsets.zero,
-          hintText: 'Empty quote...',
+        padding: const EdgeInsets.only(left: 14, top: 2, bottom: 2),
+        child: TextField(
+          controller: _textCtrl,
+          focusNode: _focusNode,
+          maxLines: null,
+          style: GoogleFonts.inter(
+            fontSize: 15.5,
+            fontStyle: FontStyle.italic,
+            color: widget.textColor,
+            height: 1.6,
+          ),
+          decoration: const InputDecoration(
+            border: InputBorder.none,
+            isDense: true,
+            contentPadding: EdgeInsets.zero,
+            hintText: 'Empty quote...',
+          ),
+          onChanged: widget.onChanged,
         ),
-        onChanged: widget.onChanged,
       ),
     );
   }

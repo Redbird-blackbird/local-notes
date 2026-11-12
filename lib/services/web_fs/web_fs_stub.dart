@@ -8,6 +8,10 @@ class WebFsHelper {
 
   static Future<bool> deleteFile(String path) async => false;
 
+  static Future<bool> createDirectory(String path) async => false;
+
+  static Future<bool> deleteDirectory(String path) async => false;
+
   static void downloadFile(String filename, String content) {}
 
   static String? getStorage(String key) => null;

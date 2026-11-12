@@ -3,6 +3,7 @@ import '../../models/note_file.dart';
 import '../../services/vault_service.dart';
 import '../../theme/app_theme.dart';
 import '../modals/search_modal.dart';
+import '../modals/move_note_dialog.dart';
 
 class SidebarView extends StatefulWidget {
   final VaultService vaultService;
@@ -28,6 +29,167 @@ class _SidebarViewState extends State<SidebarView> {
         _collapsedFolders.add(folder);
       }
     });
+  }
+
+  void _showCreateFolderDialog(BuildContext context) {
+    final textCtrl = TextEditingController();
+    String? errorText;
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final isDark = Theme.of(context).brightness == Brightness.dark;
+            final bg = isDark ? AppTheme.darkCardBg : Colors.white;
+            final textColor = isDark ? AppTheme.darkTextPrimary : AppTheme.lightTextPrimary;
+            final border = isDark ? AppTheme.darkBorder : AppTheme.lightBorder;
+
+            return AlertDialog(
+              backgroundColor: bg,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: border),
+              ),
+              title: Row(
+                children: [
+                  const Icon(Icons.create_new_folder_outlined, size: 20, color: AppTheme.accentBlue),
+                  const SizedBox(width: 10),
+                  Text('New Folder', style: TextStyle(fontSize: 16, color: textColor, fontWeight: FontWeight.w600)),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: textCtrl,
+                    autofocus: true,
+                    style: TextStyle(fontSize: 13.5, color: textColor),
+                    decoration: InputDecoration(
+                      hintText: 'Folder name (e.g. Work, Ideas, Wiki)...',
+                      errorText: errorText,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: AppTheme.accentBlue),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    onSubmitted: (val) async {
+                      final err = await widget.vaultService.createFolder(val);
+                      if (err != null) {
+                        setDialogState(() => errorText = err);
+                      } else {
+                        if (ctx.mounted) Navigator.of(ctx).pop();
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final err = await widget.vaultService.createFolder(textCtrl.text);
+                    if (err != null) {
+                      setDialogState(() => errorText = err);
+                    } else {
+                      if (ctx.mounted) Navigator.of(ctx).pop();
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.accentBlue,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  ),
+                  child: const Text('Create Folder'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showDeleteFolderDialog(BuildContext context, String folderName) {
+    final notesInFolder = widget.vaultService.notesByFolder[folderName] ?? [];
+    final count = notesInFolder.length;
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        final bg = isDark ? AppTheme.darkCardBg : Colors.white;
+        final textColor = isDark ? AppTheme.darkTextPrimary : AppTheme.lightTextPrimary;
+        final mutedColor = isDark ? AppTheme.darkTextSecondary : AppTheme.lightTextSecondary;
+        final border = isDark ? AppTheme.darkBorder : AppTheme.lightBorder;
+
+        return AlertDialog(
+          backgroundColor: bg,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: border),
+          ),
+          title: Row(
+            children: [
+              const Icon(Icons.delete_outline, size: 20, color: AppTheme.accentRed),
+              const SizedBox(width: 10),
+              Text('Delete Folder', style: TextStyle(fontSize: 16, color: textColor, fontWeight: FontWeight.w600)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Are you sure you want to delete "$folderName"?',
+                style: TextStyle(fontSize: 13.5, color: textColor, fontWeight: FontWeight.w500),
+              ),
+              if (count > 0) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'This folder currently contains $count page${count > 1 ? 's' : ''}. You can choose to move them to Root or delete them completely.',
+                  style: TextStyle(fontSize: 12.5, color: mutedColor),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            if (count > 0)
+              TextButton(
+                onPressed: () async {
+                  await widget.vaultService.deleteFolder(folderName, deleteNotes: true);
+                  if (ctx.mounted) Navigator.of(ctx).pop();
+                },
+                child: const Text('Delete All Notes', style: TextStyle(color: AppTheme.accentRed)),
+              ),
+            ElevatedButton(
+              onPressed: () async {
+                await widget.vaultService.deleteFolder(folderName, deleteNotes: false);
+                if (ctx.mounted) Navigator.of(ctx).pop();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: count > 0 ? AppTheme.accentBlue : AppTheme.accentRed,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              ),
+              child: Text(count > 0 ? 'Move Notes to Root' : 'Delete Folder'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -236,6 +398,28 @@ class _SidebarViewState extends State<SidebarView> {
                 _buildSectionHeader(
                   title: 'WORKSPACE',
                   mutedColor: mutedColor,
+                  action: InkWell(
+                    onTap: () => _showCreateFolderDialog(context),
+                    borderRadius: BorderRadius.circular(4),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.create_new_folder_outlined, size: 14, color: mutedColor),
+                          const SizedBox(width: 4),
+                          Text(
+                            'New Folder',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w500,
+                              color: mutedColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
 
                 ...foldersMap.entries.map((entry) {
@@ -287,6 +471,46 @@ class _SidebarViewState extends State<SidebarView> {
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(),
                               ),
+                              if (folderName != 'Root') ...[
+                                const SizedBox(width: 4),
+                                PopupMenuButton<String>(
+                                  icon: Icon(Icons.more_horiz, size: 14, color: mutedColor.withValues(alpha: 0.6)),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                                  color: isDark ? AppTheme.darkCardBg : Colors.white,
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  splashRadius: 12,
+                                  onSelected: (val) {
+                                    if (val == 'add') {
+                                      vault.createNote(folder: folderName);
+                                    } else if (val == 'delete') {
+                                      _showDeleteFolderDialog(context, folderName);
+                                    }
+                                  },
+                                  itemBuilder: (ctx) => [
+                                    PopupMenuItem(
+                                      value: 'add',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.add, size: 14, color: mutedColor),
+                                          const SizedBox(width: 8),
+                                          const Text('New page inside', style: TextStyle(fontSize: 12)),
+                                        ],
+                                      ),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'delete',
+                                      child: Row(
+                                        children: const [
+                                          Icon(Icons.delete_outline, size: 14, color: AppTheme.accentRed),
+                                          SizedBox(width: 8),
+                                          Text('Delete folder', style: TextStyle(fontSize: 12, color: AppTheme.accentRed)),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -294,17 +518,34 @@ class _SidebarViewState extends State<SidebarView> {
 
                       // Notes in Folder
                       if (!isCollapsed)
-                        ...notesInFolder.map((note) => _buildNoteItem(
-                              note: note,
-                              isActive: vault.activeNote?.id == note.id,
-                              onTap: () => vault.selectNote(note),
-                              isDark: isDark,
-                              textColor: textColor,
-                              mutedColor: mutedColor,
-                              hoverBg: hoverBg,
-                              activeBg: activeBg,
-                              depth: 1,
-                            )),
+                        if (notesInFolder.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(36, 4, 12, 6),
+                            child: InkWell(
+                              onTap: () => vault.createNote(folder: folderName),
+                              borderRadius: BorderRadius.circular(4),
+                              child: Text(
+                                'No pages inside • Click to create',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: mutedColor.withValues(alpha: 0.5),
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ),
+                          )
+                        else
+                          ...notesInFolder.map((note) => _buildNoteItem(
+                                note: note,
+                                isActive: vault.activeNote?.id == note.id,
+                                onTap: () => vault.selectNote(note),
+                                isDark: isDark,
+                                textColor: textColor,
+                                mutedColor: mutedColor,
+                                hoverBg: hoverBg,
+                                activeBg: activeBg,
+                                depth: 1,
+                              )),
                     ],
                   );
                 }),
@@ -405,6 +646,7 @@ class _SidebarViewState extends State<SidebarView> {
     bool? isCollapsed,
     VoidCallback? onToggle,
     required Color mutedColor,
+    Widget? action,
   }) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 12, 4),
@@ -420,6 +662,8 @@ class _SidebarViewState extends State<SidebarView> {
             ),
           ),
           const Spacer(),
+          ?action,
+          if (action != null && onToggle != null) const SizedBox(width: 4),
           if (onToggle != null && isCollapsed != null)
             InkWell(
               onTap: onToggle,
@@ -527,39 +771,81 @@ class _SidebarViewState extends State<SidebarView> {
                 ),
               ),
               if (note.isFavorite)
-                const Icon(Icons.star_rounded, size: 13, color: AppTheme.accentOrange)
-              else
-                PopupMenuButton<String>(
-                  icon: Icon(Icons.more_horiz, size: 15, color: mutedColor.withValues(alpha: 0.6)),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                  color: isDark ? AppTheme.darkCardBg : Colors.white,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  splashRadius: 12,
-                  onSelected: (val) {
-                    if (val == 'favorite') {
-                      widget.vaultService.toggleFavorite(note);
-                    } else if (val == 'export') {
-                      widget.vaultService.exportNoteAsMarkdown(note);
-                    } else if (val == 'delete') {
-                      widget.vaultService.deleteNote(note);
-                    }
-                  },
-                  itemBuilder: (ctx) => [
-                    PopupMenuItem(
-                      value: 'favorite',
-                      child: Text(note.isFavorite ? 'Remove from favorites' : 'Add to favorites', style: const TextStyle(fontSize: 12)),
-                    ),
-                    const PopupMenuItem(
-                      value: 'export',
-                      child: Text('Export Markdown (.md)', style: TextStyle(fontSize: 12)),
-                    ),
-                    PopupMenuItem(
-                      value: 'delete',
-                      child: Text('Delete page', style: TextStyle(fontSize: 12, color: AppTheme.accentRed)),
-                    ),
-                  ],
+                const Padding(
+                  padding: EdgeInsets.only(right: 4),
+                  child: Icon(Icons.star_rounded, size: 13, color: AppTheme.accentOrange),
                 ),
+              PopupMenuButton<String>(
+                icon: Icon(Icons.more_horiz, size: 15, color: mutedColor.withValues(alpha: 0.6)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                color: isDark ? AppTheme.darkCardBg : Colors.white,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                splashRadius: 12,
+                onSelected: (val) {
+                  if (val == 'move') {
+                    showDialog(
+                      context: context,
+                      builder: (ctx) => MoveNoteDialog(
+                        note: note,
+                        vaultService: widget.vaultService,
+                      ),
+                    );
+                  } else if (val == 'favorite') {
+                    widget.vaultService.toggleFavorite(note);
+                  } else if (val == 'export') {
+                    widget.vaultService.exportNoteAsMarkdown(note);
+                  } else if (val == 'delete') {
+                    widget.vaultService.deleteNote(note);
+                  }
+                },
+                itemBuilder: (ctx) => [
+                  PopupMenuItem(
+                    value: 'move',
+                    child: Row(
+                      children: [
+                        Icon(Icons.drive_file_move_outlined, size: 15, color: mutedColor),
+                        const SizedBox(width: 8),
+                        const Text('Move to folder...', style: TextStyle(fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'favorite',
+                    child: Row(
+                      children: [
+                        Icon(
+                          note.isFavorite ? Icons.star_border_rounded : Icons.star_rounded,
+                          size: 15,
+                          color: AppTheme.accentOrange,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(note.isFavorite ? 'Remove from favorites' : 'Add to favorites', style: const TextStyle(fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'export',
+                    child: Row(
+                      children: [
+                        Icon(Icons.download_rounded, size: 15, color: mutedColor),
+                        const SizedBox(width: 8),
+                        const Text('Export Markdown (.md)', style: TextStyle(fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: const [
+                        Icon(Icons.delete_outline, size: 15, color: AppTheme.accentRed),
+                        SizedBox(width: 8),
+                        Text('Delete page', style: TextStyle(fontSize: 12, color: AppTheme.accentRed)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
