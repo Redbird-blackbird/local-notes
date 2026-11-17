@@ -335,6 +335,7 @@ class _NotionEditorViewState extends State<NotionEditorView> {
     Color border,
   ) {
     final vault = widget.vaultService;
+    final isNarrow = MediaQuery.of(context).size.width < 600;
     return Container(
       height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -356,16 +357,24 @@ class _NotionEditorViewState extends State<NotionEditorView> {
             ),
           if (!vault.isSidebarOpen) const SizedBox(width: 12),
 
-          // Breadcrumbs
-          Text(
-            vault.vaultName,
-            style: TextStyle(fontSize: 12, color: mutedColor, fontWeight: FontWeight.w500),
+          // Breadcrumbs (shrink/ellipsize on narrow screens)
+          Expanded(
+            child: Row(
+              children: [
+          Flexible(
+            child: Text(
+              vault.vaultName,
+              style: TextStyle(fontSize: 12, color: mutedColor, fontWeight: FontWeight.w500),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
             child: Text('/', style: TextStyle(fontSize: 12, color: mutedColor.withValues(alpha: 0.4))),
           ),
-          InkWell(
+          Flexible(
+          child: InkWell(
             onTap: () {
               showDialog(
                 context: context,
@@ -380,26 +389,35 @@ class _NotionEditorViewState extends State<NotionEditorView> {
                 children: [
                   Icon(Icons.folder_outlined, size: 13, color: mutedColor),
                   const SizedBox(width: 4),
-                  Text(
-                    note.folder,
-                    style: TextStyle(fontSize: 12, color: mutedColor, fontWeight: FontWeight.w500),
+                  Flexible(
+                    child: Text(
+                      note.folder,
+                      style: TextStyle(fontSize: 12, color: mutedColor, fontWeight: FontWeight.w500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ],
               ),
             ),
           ),
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
             child: Text('/', style: TextStyle(fontSize: 12, color: mutedColor.withValues(alpha: 0.4))),
           ),
-          Text(
-            note.title.isEmpty ? 'Untitled' : note.title,
-            style: TextStyle(fontSize: 12, color: textColor, fontWeight: FontWeight.w600),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+          Flexible(
+            child: Text(
+              note.title.isEmpty ? 'Untitled' : note.title,
+              style: TextStyle(fontSize: 12, color: textColor, fontWeight: FontWeight.w600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
 
-          const Spacer(),
+              ],
+            ),
+          ),
 
           // Save Indicator with pulsing dot
           Container(
@@ -427,8 +445,8 @@ class _NotionEditorViewState extends State<NotionEditorView> {
                     ],
                   ),
                 ),
-                const SizedBox(width: 6),
-                Text(
+                if (!isNarrow) const SizedBox(width: 6),
+                if (!isNarrow) Text(
                   vault.saveStatusMessage ?? 'Saved',
                   style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: mutedColor),
                 ),
@@ -436,7 +454,7 @@ class _NotionEditorViewState extends State<NotionEditorView> {
             ),
           ),
 
-          const SizedBox(width: 12),
+          SizedBox(width: isNarrow ? 6 : 12),
 
           // View Mode Switcher Pill (Notion vs Raw)
           Container(
@@ -449,8 +467,8 @@ class _NotionEditorViewState extends State<NotionEditorView> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _buildModeTab('⚡ Notion', !_isRawMode, () => setState(() => _isRawMode = false), isDark, textColor, mutedColor),
-                _buildModeTab('📄 Raw .md', _isRawMode, () => setState(() => _isRawMode = true), isDark, textColor, mutedColor),
+                _buildModeTab(isNarrow ? '⚡' : '⚡ Notion', !_isRawMode, () => setState(() => _isRawMode = false), isDark, textColor, mutedColor),
+                _buildModeTab(isNarrow ? '📄' : '📄 Raw .md', _isRawMode, () => setState(() => _isRawMode = true), isDark, textColor, mutedColor),
               ],
             ),
           ),
@@ -779,7 +797,7 @@ class _NotionEditorViewState extends State<NotionEditorView> {
 
   Widget _buildMetadataBar(NoteFile note, bool isDark, Color mutedColor) {
     final dateFormat = DateFormat('MMM d, yyyy • h:mm a');
-    return Row(
+    final metaRow = Row(
       children: [
         Icon(Icons.access_time_rounded, size: 13, color: mutedColor.withValues(alpha: 0.7)),
         const SizedBox(width: 6),
@@ -817,6 +835,7 @@ class _NotionEditorViewState extends State<NotionEditorView> {
         ],
       ],
     );
+    return SingleChildScrollView(scrollDirection: Axis.horizontal, child: metaRow);
   }
 
   Widget _buildRawMarkdownEditor(bool isDark, Color textColor, Color border) {
@@ -892,11 +911,14 @@ class _NotionEditorViewState extends State<NotionEditorView> {
               children: [
                 Icon(Icons.add, size: 16, color: mutedColor.withValues(alpha: 0.4)),
                 const SizedBox(width: 8),
-                Text(
-                  'Click to add a block, or type "/" for commands',
-                  style: TextStyle(
-                    fontSize: 13.5,
-                    color: mutedColor.withValues(alpha: 0.4),
+                Flexible(
+                  child: Text(
+                    'Click to add a block, or type "/" for commands',
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      color: mutedColor.withValues(alpha: 0.4),
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
@@ -1065,6 +1087,7 @@ class _NotionBlockWidgetState extends State<NotionBlockWidget> {
     super.initState();
     _textCtrl = TextEditingController(text: widget.block.text);
     _focusNode = FocusNode();
+    _focusNode.addListener(_onFocusChange);
     if (widget.shouldAutoFocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -1095,11 +1118,94 @@ class _NotionBlockWidgetState extends State<NotionBlockWidget> {
     }
   }
 
+  void _onFocusChange() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _focusNode.removeListener(_onFocusChange);
     _focusNode.dispose();
     _textCtrl.dispose();
     super.dispose();
+  }
+
+  /// Shows a bottom-sheet with block actions (delete, duplicate, turn into).
+  /// Used on mobile / touch where the hover overlay is unavailable.
+  void _showBlockOptionsSheet() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              Container(
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: AppTheme.accentRed),
+                title: const Text('Delete block',
+                    style: TextStyle(color: AppTheme.accentRed)),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  widget.onDelete();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.copy_rounded),
+                title: const Text('Duplicate'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  widget.onDuplicate?.call();
+                },
+              ),
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Text('TURN INTO',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                      color: Colors.grey,
+                    )),
+              ),
+              ...[
+                (BlockType.paragraph, 'Text', Icons.text_fields),
+                (BlockType.heading1, 'Heading 1', Icons.title),
+                (BlockType.heading2, 'Heading 2', Icons.format_size),
+                (BlockType.heading3, 'Heading 3', Icons.text_format),
+                (BlockType.todo, 'To-do', Icons.check_box_outlined),
+                (BlockType.bullet, 'Bullet list', Icons.format_list_bulleted),
+                (BlockType.numbered, 'Numbered list', Icons.format_list_numbered),
+                (BlockType.callout, 'Callout', Icons.lightbulb_outline),
+                (BlockType.quote, 'Quote', Icons.format_quote),
+                (BlockType.code, 'Code', Icons.code),
+              ].map((r) => ListTile(
+                leading: Icon(r.$3),
+                title: Text(r.$2),
+                dense: true,
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  widget.onTurnInto?.call(r.$1);
+                },
+              )),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Widget _wrapKeyboardInterceptor({
@@ -1153,21 +1259,25 @@ class _NotionBlockWidgetState extends State<NotionBlockWidget> {
   Widget build(BuildContext context) {
     final block = widget.block;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      child: Padding(
+    return GestureDetector(
+      onLongPress: _showBlockOptionsSheet,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() => _isHovered = false),
+        child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 2.5),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Hover Handle (+ / :: / Delete)
-            Container(
-              width: 58,
+            // Hover Handle (+ / drag / options / delete)
+            SizedBox(
+              width: 84,
               height: 28,
-              alignment: Alignment.centerLeft,
-              child: _isHovered
-                  ? Row(
+              child: (_isHovered || _focusNode.hasFocus)
+                  ? FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         // Slash / Add menu (+)
@@ -1183,14 +1293,21 @@ class _NotionBlockWidgetState extends State<NotionBlockWidget> {
                             child: Icon(Icons.add, size: 14, color: widget.mutedColor),
                           ),
                         ),
-                        // Drag indicator handle (::) with ReorderableDragStartListener & Block Menu
+                        // Drag handle only (no longer wraps the menu, so taps reach the popup)
                         ReorderableDragStartListener(
                           index: widget.index,
                           child: MouseRegion(
                             cursor: SystemMouseCursors.grab,
-                            child: PopupMenuButton<String>(
-                              icon: Icon(Icons.drag_indicator, size: 14, color: widget.mutedColor),
-                              tooltip: 'Drag to move, click for options',
+                            child: Padding(
+                              padding: const EdgeInsets.all(2),
+                              child: Icon(Icons.drag_indicator, size: 14, color: widget.mutedColor),
+                            ),
+                          ),
+                        ),
+                        // Block options menu (delete / duplicate / turn into)
+                        PopupMenuButton<String>(
+                              icon: Icon(Icons.more_horiz, size: 14, color: widget.mutedColor),
+                              tooltip: 'Block options',
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                               color: widget.isDark ? AppTheme.darkCardBg : Colors.white,
                               padding: EdgeInsets.zero,
@@ -1248,8 +1365,6 @@ class _NotionBlockWidgetState extends State<NotionBlockWidget> {
                                 _buildTurnIntoMenuItem(BlockType.code, 'Code block', Icons.code),
                               ],
                             ),
-                          ),
-                        ),
                         // Quick Delete Block Button
                         InkWell(
                           onTap: widget.onDelete,
@@ -1263,7 +1378,8 @@ class _NotionBlockWidgetState extends State<NotionBlockWidget> {
                           ),
                         ),
                       ],
-                    )
+                    ),
+                  )
                   : const SizedBox.shrink(),
             ),
             const SizedBox(width: 4),
@@ -1275,6 +1391,7 @@ class _NotionBlockWidgetState extends State<NotionBlockWidget> {
           ],
         ),
       ),
+    ),
     );
   }
 
